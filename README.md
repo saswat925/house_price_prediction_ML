@@ -1,225 +1,180 @@
-# house_price_prediction_ML
+# 🏠 House Price Prediction: End-to-End ML Project
 
+An end-to-end machine learning project on a **1 lakh (101,200 rows × 26 columns)** Indian housing dataset with deliberately messy data. It covers data cleaning, EDA, regression, classification, clustering, time-series forecasting and model deployment in a single notebook.
 
-Project purpose & targets
-Objective: Predict house prices and related outcomes from a large Indian housing dataset (101k rows).
-Primary targets:
-Regression: price_lakh (continuous)
-Classification A: sold_within_30_days (binary)
-Classification B: price_category (Low/Medium/High — multi-class)
-Business uses: automated price estimates for listings, lead scoring for fast-sales opportunities, market segmentation, pricing recommendations for sellers/agents.
-Data overview & quick audit checklist
-Columns (example): property_id, listing_date, city, locality, property_type, size_sqft, bedrooms, bathrooms, balconies, floor_no, total_floors, age_years, furnishing, parking_spots, lift, gym, swimming_pool, security, dist_city_center_km, dist_metro_km, facing, owner_type, builder_rating, price_lakh, price_category, sold_within_30_days.
-Known data quality issues to address:
-Exact duplicates (drop or dedupe by property_id).
-Impossible values (negative age, future listing dates, extremely large size/price).
-Missingness (builder_rating ~12%, facing ~8%, dist_metro_km ~6%).
-Inconsistent categorical spellings (furnishing, locality names).
-Outliers in price (use winsorization, capping, or inspect manually).
-End-to-end pipeline (high-level steps)
-Ingest & audit data
-Clean & normalize (dedupe, fix types, remove impossible dates)
-Feature engineering & transformation
-Split data (train / validation / holdout or CV)
-Train baseline models
-Tune best models with CV/Optuna and early stopping
-Evaluate and interpret results
-Save model + metadata, build simple API
-Monitor in production, schedule retrain if drift detected
-Data cleaning — step-by-step
-Convert dates: df["listing_date"] = pd.to_datetime(df["listing_date"], errors="coerce") filter future dates: df = df[df["listing_date"] <= pd.Timestamp.today()]
-Deduplicate: df = df.drop_duplicates(subset="property_id", keep="first")
-Fix impossible numbers: df.loc[df["age_years"] < 0, "age_years"] = np.nan df.loc[df["bedrooms"] == 0, "bedrooms"] = np.nan # or business rule If size_sqft > 20000 or price_lakh > 5000: flag and inspect before dropping
-Normalize categorical values: df["furnishing"] = df["furnishing"].str.lower().str.replace("-", " ").str.strip() map variations to fixed set {"unfurnished","semi-furnished","fully-furnished"}
-Convert yes/no to binary: df[["lift","gym","swimming_pool","security"]] = df[["lift","gym","swimming_pool","security"]].applymap(lambda x: 1 if str(x).lower().startswith("y") else 0)
-Missing-value strategy:
-Numeric (distances, builder_rating): impute with city-wise median + add missing flag.
-Categorical (facing): fill with "Unknown" and add flag.
-For high-missing columns consider dropping or engineering a new feature "missing_builder_rating".
-Outlier strategy:
-Visual review of top N prices by city/locality.
-Methods: winsorize at 99th percentile, or remove extreme entries only after manual inspection.
-Feature engineering ideas (most high-impact)
-price_per_sqft = (price_lakh * 100000) / size_sqft
-floor_ratio = floor_no / total_floors (cap at 1)
-bedrooms_per_sqft, bathrooms_per_sqft
-age_bucket (0-5, 6-10, 11-20, 20+)
-locality_popularity = df.groupby(["city","locality"]).size() (normalized)
-city-level median_price, locality median_price (target encoding with CV)
-temporal features: listing_year, listing_month, weekday, days_since_reference
-interaction features: size_sqft * bedrooms, builder_rating * furnishing
-text normalization: canonicalize locality names; optionally embed locality with frequency or geo clusters
-spatial grouping: cluster localities using KMeans on (avg_price_per_sqft, demand) for segmentation
-Train / validation strategy
-If no temporal leakage: Stratified K-Fold on price_category for regression? Instead:
-KFold (5 or 10) for general case
-GroupKFold with group=locality or city to avoid leakage across same neighborhood
-If time matters (listings change): use a TimeSeriesSplit by listing_date
-Hold out a final test set (10-15%) only for final metrics
-Baseline models (get these working first)
-Baseline 1: Median model per city/locality (quick business baseline)
-Baseline 2: Linear Regression on numeric features with one-hot encoding
-Baseline 3: Ridge/Lasso/ElasticNet (regularized linear)
-Algorithms to try — step-by-step explanation & why For each, pipeline pattern: ColumnTransformer (numeric imputer + scaler, categorical imputer + OneHot/TargetEncoder) -> model. For price use TransformedTargetRegressor(log1p) to stabilize skew.
-Decision Tree
+## 📌 What's Inside
 
-Fast, interpretable
-Good for non-linear relationships, but overfits -> tune max_depth, min_samples_leaf
-Useful for quick rules and feature check
-Random Forest
+| Part | What it does |
+|---|---|
+| **A. Data** | Load → audit → clean → EDA → feature engineering |
+| **B. Regression** | Predict `price_lakh` using 10 models, ensemble blend, tuning, 5-fold CV, residual analysis, permutation importance |
+| **C. Classification** | (1) Will the house sell within 30 days? (2) Is the price Low / Medium / High? |
+| **D. Unsupervised** | K-Means market segments + PCA visualisation |
+| **E. Time Series** | 12-month price index forecast: Naive vs Holt-Winters vs ARIMA |
+| **F. Deployment** | Saved pipeline (`.pkl`) + a `predict_price()` function |
 
-Ensemble of trees, robust, good baseline
-Key params: n_estimators, max_depth, min_samples_leaf, max_features
-Pros: handles many features; cons: slower, less memory efficient
-Gradient Boosting (LightGBM / XGBoost / CatBoost)
+## 🧹 Data Cleaning Highlights
 
-Often top performer for tabular data
-LightGBM advantages: speed, categorical handling (CatBoost & LightGBM can handle categorical indices)
-Use early_stopping_rounds with a validation set
-Key LightGBM params to tune: num_leaves, learning_rate, n_estimators, max_depth, min_child_samples, subsample, colsample_bytree, reg_alpha, reg_lambda
-Wrap inside TransformedTargetRegressor(log1p & expm1)
-Use objective='rmse' for regression and eval_metric
-HistGradientBoostingRegressor (sklearn)
+- Removed **1,200 duplicate rows**
+- Standardised messy spellings (`Bangalore`/`Bengaluru`, `BBSR`/`Bhubaneswar`, `Bombay`/`Mumbai`, etc.)
+- Fixed impossible values (10 sq.ft homes, negative ages, floor above top floor)
+- Filled missing values with group medians instead of one global number
+- Removed wrong prices using price per sq.ft vs the city median
+- Kept **99,405 of 101,200 rows (98.2%)**
 
-Fast; good default; less hyperparameters to tune
-CatBoost
+## 📊 Results
 
-Good with categorical features without much preprocessing
-Works well out-of-the-box; set verbose=0 and use early stopping
-XGBoost
+| Task | Best Model | Result |
+|---|---|---|
+| Price regression | CatBoost | MAPE **6.22%**, R² **0.984** |
+| Final tuned model (LightGBM) | LightGBM + log-target | MAE **9.05 lakh**, R² **0.982**, MAPE **6.48%** |
+| 5-fold cross-validation | LightGBM pipeline | R² **0.980 ± 0.0005** (very stable) |
+| Sold within 30 days | Logistic Regression | ROC-AUC **0.771** |
+| Price category (Low/Med/High) | Logistic Regression | Accuracy **93.9%**, no Low↔High mistakes |
+| Market segments | K-Means | k = 2 (silhouette 0.19, weak natural grouping) |
+| Price index forecast | ARIMA(1,1,1) + drift | MAPE **0.76%** vs 2.19% for naive |
 
-Similar to LightGBM; stable, many practitioners prefer it
-SVR / KNN / MLP
+## 💡 All Insights
 
-Try small experiments; scale features for those
-MLP: need more tuning and regularization; use if enough data and you want neural net
-Quantile regression (LightGBM with objective='quantile')
+### 1. Data quality
+- **9 columns had missing values.** `builder_rating` was the worst (12.0%), followed by `facing` (8.1%), `dist_metro_km` (6.1%), `age_years` (5.1%), `furnishing` (4.1%), `balconies` (3.1%), `bathrooms` (2.0%), `size_sqft` (1.0%) and the target `price_lakh` (0.5%).
+- **1,200 exact duplicates** were found (101,200 rows → 100,000 unique `property_id`s). Duplicates can leak across train and test and fake a high score.
+- **The city column had 26 spellings for 10 cities** (for example `BANGALORE`, `Bombay`, `BBSR`, `Calcutta`, `New Delhi`).
+- **Impossible values found:** 60 sizes, 40 bedroom counts, 50 ages and 30 floor numbers (floor above the top floor).
+- **Plain IQR outlier detection flagged 7,186 prices (7.1%)** above 320.94 lakh, with the maximum at 8,888.75 lakh. Most of these are genuine expensive homes (for example Mumbai), so the project instead compared each price per sq.ft with the **city median** and removed only **82 clearly wrong rows (0.08%)**.
 
-For prediction intervals
-Stacking / Blending / Ensembles
+### 2. Exploratory analysis
+- **Price is heavily right-skewed** (skewness 2.84). After a log transform it drops to 0.30, so the models predict `log(price)`.
+- **Location is the biggest price driver.** Mumbai costs about **7x more per sq.ft** than Cuttack:
 
-Combine top models (e.g., LightGBM + CatBoost + RandomForest) with a meta-learner (Ridge or LightGBM)
-Often improves performance slightly
-Practical training steps (example workflow)
-Build preprocessing ColumnTransformer:
-numeric pipeline: SimpleImputer(strategy='median') → StandardScaler()
-categorical pipeline: SimpleImputer(constant='Unknown') → OneHotEncoder(handle_unknown='ignore') OR TargetEncoder (with CV)
-Build Pipeline: preprocessing -> TransformedTargetRegressor(regressor=LightGBM(...), func=np.log1p, inverse_func=np.expm1)
-Baseline fit: pipeline.fit(X_train, y_train)
-CV evaluation: cross_val_score(pipeline, X_train, y_train_transformed, cv=GroupKFold(groups=group_col))
-Hyperparameter tuning:
-Use Optuna or RandomizedSearchCV with early stopping. Example Optuna pruner + LightGBM:
-Objective: minimize CV RMSE
-Trials: 50–200
-Use LightGBM early_stopping on validation folds
-Final model: retrain on full train+val with best params, evaluate on holdout.
-Metrics to report
-Regression: RMSE (primary), MAE, R², Median Absolute Error, and percentage errors (MAPE is sensitive to small prices).
-Classification: accuracy, precision, recall, F1, AUC-ROC, confusion matrix.
-For business: use revenue-weighted errors (error weighted by price) to show business impact.
-Model interpretability & explainability
-Feature importance:
-LightGBM feature_importance (gain vs split)
-Permutation importance (sklearn) — more robust
-SHAP
-Global SHAP summary plot for most influential features
-Local SHAP for example properties (explain single predictions)
-Partial dependence plots: show effect of size_sqft or bedrooms on predicted price
-Business translation: e.g., "each extra 100 sqft increases price by X% in City Y", or "being in locality Z adds Y lakhs".
-Error & residual analysis
-Plot predicted vs actual; residuals vs predicted and vs top features (size, city)
-Group errors by city/locality/price_bucket to find segments where model underperforms
-If errors skew by builder_rating or furnishing, create specialized models for those segments
-Model persistence & safe sharing
-Save pipeline + metadata:
-joblib.dump(pipeline, "models/house_price_model.joblib")
-Save metadata JSON: features order, training date, seed, metrics, package versions (pip freeze)
-Use Git LFS for model binaries (.joblib, .pkl)
-Export to ONNX if you want language-agnostic inference
-Production deployment (simple)
-Create predict API with FastAPI:
-Pydantic model for input validation (feature types & ranges)
-Endpoint POST /predict returns predicted price and uncertainty (if quantiles)
-Dockerfile for container: FROM python:3.10-slim COPY requirements.txt . RUN pip install -r requirements.txt COPY src/ /app CMD ["uvicorn","src.api:app","--host","0.0.0.0","--port","8080"]
-Add logging and request tracing
-Add health and metrics endpoints
-Monitoring & model lifecycle
-Logging: store model inputs + predictions + any returned actual price to a DB
-Drift detection: compare distributions (KS test) between training and incoming data (size, price_per_sqft, locality)
-Performance monitoring: track MAE/RMSE over time; alert if it drifts beyond threshold
-Retraining policy: e.g., retrain monthly or when drift detected, always validate on a holdout
-Business insights and how to present them
-Key features that drive price: size_sqft, locality, bedrooms, builder_rating, distance to metro, furnishing
-Market segmentation: cluster localities by median price & demand to identify premium vs emerging neighborhoods
-Price recommendation engine:
-Suggest listing price ± buffer for faster sale; integrate predicted probability of sale in 30 days
-Lead scoring for agents:
-Predict properties likely to sell quickly → prioritize for marketing
-Inventory planning for developers:
-Use price trends and time to sell predictions to plan discounts/incentives
-Dashboard KPIs to present:
-Median price by city/locality, price trends, top growth localities, top features influencing price, fraction of over/under-priced listings
-Reproducibility & governance
-Save seeds and package versions
-Use dataset versioning (DVC or store SHA256 of dataset)
-Add a model card: training data provenance, intended use, limitations
-Add LICENSE and security note: do not load pickles from untrusted sources
-Tests, CI & repo structure
-Tests:
-test_preprocessing: negative ages → NaN, missing builder_rating flagged
-test_predict: model loads and produces output of expected shape
-test_pipeline_smoke: small synthetic data runs through pipeline
-CI: GitHub Actions runs tests and linters, builds minimal Docker image
-Suggested repo layout (already described in README you used)
-Sample command-line & code snippets
-Train (example): python src/train.py --data data/house_price_dataset_1lakh.csv --out models/ --seed 42
-Predict (example): python src/predict.py --model models/house_price_model.joblib --input examples/sample_input.json
-Save metadata: import json, joblib joblib.dump(pipeline, "models/house_price_model.joblib") meta = {"seed":42, "date":"2026-10-19","metrics":{"rmse":20.1,"r2":0.78}, "features":feature_list} with open("models/house_price_model.json","w") as f: json.dump(meta,f)
-Evaluation checklist before production
-Does holdout test meet business error tolerance? (e.g., +/- 10% for 80% of listings)
-Residuals show no strong bias across cities/localities
-Input validation and fallback behavior implemented
-Monitoring and retrain policy defined
-Team & docs in place (README, model card, API docs)
-Recruitment plan & roles (who to hire & what to evaluate)
-Early phase (MVP):
-1 Data Scientist: features, modeling, interpretability (skills: scikit-learn, pandas, LightGBM, statistics, SHAP)
-1 ML Engineer / MLOps: deployment, CI, model serving (skills: Docker, FastAPI, GitHub Actions, model monitoring)
-1 Data Engineer (part-time): ETL, dataset versioning, pipelines, DVC (skills: SQL, Airflow/Prefect, S3)
-Growth phase (productize):
-Backend engineer (API scaling)
-Frontend engineer (dashboard)
-Product manager (define KPIs)
-Interview tasks:
-Take-home: clean a small slice of data, build a model pipeline, document choices, and show performance
-MLE/Dev: task to containerize an API and add input validation
-DS: explain top 5 features using SHAP and propose a business rule arising from the model
-Candidate checklist:
-Strong coding and reproducible experiments
-Experience with tree-based models and tuning
-Understanding of fairness, bias, and production constraints
-Typical pitfalls & advice
-Beware of label leakage (e.g., listing_date encoding future price trends)
-Don’t overfit to outliers or small localities (use GroupKFold)
-Avoid leaking locality target encoding into test fold (use KFold-based target encoding)
-Be careful with pickles and security; use ONNX where possible for serving
-Next steps & prioritized to-do list
-Data cleaning script: remove duplicates, fix negatives, normalize categories
-Baseline pipeline: ColumnTransformer + LightGBM + TransformedTargetRegressor
-CV and Optuna tuning
-Save model + metadata, enable Git LFS
-Build FastAPI predict endpoint + Dockerfile
-Add tests and GitHub Actions CI
-Add SHAP explainability plots & short model card
-Create dashboards for top business KPIs
-Set up monitoring & retrain automation
-If you want, I can:
+| City | Median price (lakh) | Median price per sq.ft (₹) |
+|---|---|---|
+| Mumbai | 325 | 26,513 |
+| Delhi | 193 | 15,678 |
+| Bengaluru | 124 | 10,006 |
+| Pune | 112 | 9,095 |
+| Chennai | 107 | 8,595 |
+| Hyderabad | 102 | 8,298 |
+| Kolkata | 83 | 6,726 |
+| Ahmedabad | 69 | 5,535 |
+| Bhubaneswar | 66 | 5,370 |
+| Cuttack | 47 | 3,808 |
 
-generate ready-to-run code templates:
-src/data_preprocessing.py (cleaning & feature engineering)
-src/train.py (pipeline, CV, Optuna tuning)
-src/predict.py (FastAPI + pydantic)
-Dockerfile, requirements.txt, model_card.md
-produce a shortlist for the hiring tasks and a take-home assignment with evaluation rubric
-produce a short business-facing slide outline summarizing model value and recommended product integrations
-Which of these do you want me to produce next? (I can start with working code templates for preprocessing + training.)
+- **Size is the strongest numeric driver** (correlation with price 0.49), but the relationship fans out because every city has its own rate per sq.ft.
+- **Bedrooms and size are highly correlated** (0.82), which is multicollinearity. Regularised and tree models handle it well.
+- **Amenities matter:** a house with 4 amenities has a **31% higher** city-adjusted price level than one with none.
+- **Furnishing matters moderately:** fully furnished homes carry a **10% premium** over unfurnished ones.
+- **Facing direction has almost no effect** (0.9% spread between best and worst).
+- **Prices rise about 4.1% per year** (2019 to 2024).
+
+### 3. Regression (predicting price)
+
+| Model | MAE (lakh) | R² | MAPE |
+|---|---|---|---|
+| CatBoost | 8.67 | 0.98 | **6.22%** |
+| LightGBM | 9.21 | 0.98 | 6.61% |
+| XGBoost | 9.42 | 0.98 | 6.73% |
+| HistGradientBoosting | 9.44 | 0.98 | 6.73% |
+| Linear Regression | 14.28 | 0.86 | 9.38% |
+| Ridge | 14.28 | 0.86 | 9.38% |
+| Elastic Net | 14.45 | 0.87 | 9.48% |
+| Lasso | 14.72 | 0.86 | 9.68% |
+| Random Forest | 18.32 | 0.94 | 13.63% |
+| Decision Tree | 21.94 | 0.91 | 16.53% |
+
+- **Boosting models win clearly** (6.2% to 6.7% error). They learn the interactions left over after the main effects.
+- **Linear models are a strong baseline** (about 9.4% error) because log-price is almost additive.
+- **No major overfitting:** train and test R² are close for every model.
+- **Blending the top 3 models did not help** (6.31% vs 6.22% for CatBoost alone), because the three boosting models make very similar mistakes.
+- **Tuning helped slightly:** LightGBM improved from 6.61% to 6.48% MAPE.
+- **The final model is stable.** 5-fold CV gave R² 0.9801 ± 0.0005 and MAE 9.14 ± 0.14 lakh.
+- **Final test result:** MAE 9.05 lakh, RMSE 15.79, R² 0.982, MAPE 6.48%. The median error is 5.33%, and **90% of predictions are within ±13.1%**.
+- **No city is treated unfairly.** MAPE ranges only from 6.27% (Delhi, easiest) to 6.68% (Ahmedabad, hardest), with bias close to 0 everywhere.
+- **Accuracy holds across price bands:** 6.79% for the cheapest 25%, 6.46%, 6.30%, and 6.37% for the costliest 25%.
+- **Top 5 price drivers:** `city`, `size_sqft`, `locality`, `years_since_2019` and `age_years`.
+- **Near-zero importance** (candidates to drop): `bath_per_bed`, `floor_ratio`, `total_floors`, `gym_flag`, `security_flag`, `swimming_pool_flag`, `month`, `owner_type`, `is_new`, `rating_missing`, `facing`, `lift_flag` and `balconies`. The individual amenity flags score low most likely because `amenity_score` already captures them.
+
+### 4. Classification
+**Will it sell within 30 days?**
+- Classes are imbalanced: **64% not sold, 36% sold**.
+- Best ROC-AUC is **0.771** (Logistic Regression, LightGBM and Random Forest are almost tied). Accuracy is 0.67.
+- The model catches **80% of houses that do sell** (recall), but only 53% of its "will sell" predictions are correct (precision).
+- **Asking price is the strongest driver of a quick sale.**
+- Sell rate by price category: **Low 64.3%, Medium 47.7%, High 14.1%**. Cheaper homes sell much faster.
+- Sell rate by owner type: Builder 38.2%, Owner 37.9%, **Agent 31.0%**.
+- Selling speed has a large random component (buyer luck, negotiation), so a perfect score is not possible.
+
+**Price category (Low / Medium / High)**
+- Accuracy is **93.9%** (Logistic Regression) and 93.4% (LightGBM).
+- There were **0 Low↔High mistakes**. All 1,308 errors were between neighbouring classes, right at the borders (for example a 49 vs 51 lakh house).
+
+### 5. Clustering (K-Means + PCA)
+- Silhouette scores were low for every k, and the best was **k = 2 (0.187)**. Prices change smoothly, so there are no sharp natural groups.
+- The two segments split mostly by **size**: 40,200 larger homes (median 1,694 sq.ft, 143.8 lakh) and 59,205 smaller homes (median 1,030 sq.ft, 82.0 lakh). Price per sq.ft is almost the same in both (₹8,303 vs ₹8,095).
+- Segments are a convenient grouping for strategy, not hard truth. Try k = 4 or 5 for finer segments.
+
+### 6. Time-series forecasting
+- The monthly price index covers **84 months** (Jan 2019 to Dec 2025), with the last 12 months held out as the test.
+- **ARIMA(1,1,1) with drift and Holt exponential smoothing tied at 0.76% MAPE**, about **3x better than the naive guess** (2.19%). Models with a trend term win because prices rise steadily.
+- The 12-month forecast moves the index from 1.146 to 1.178 (**+2.8%**), a little slower than the 4.1% yearly average seen in the EDA.
+
+### 7. What-if predictions from the deployed model
+
+| Scenario | Predicted price |
+|---|---|
+| Cuttack, CDA, 1,200 sq.ft 3BHK flat | ₹61.6 lakh |
+| Mumbai, Powai, 1,200 sq.ft 3BHK flat | ₹361.3 lakh (about 5.9x Cuttack) |
+| Bhubaneswar, Patia, 1,800 sq.ft 4BHK villa | ₹148.2 lakh |
+| Same Cuttack flat, 20 years old | ₹51.6 lakh (about 16% lower) |
+| Same Cuttack flat with gym and pool | ₹68.8 lakh (about 12% higher) |
+
+## 🛠️ Tech Stack
+
+`Python` · `pandas` · `NumPy` · `Matplotlib` · `Seaborn` · `scikit-learn` · `XGBoost` · `LightGBM` · `CatBoost` · `statsmodels` · `joblib`
+
+## 🚀 How to Run
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/<your-username>/<your-repo>.git
+cd <your-repo>
+
+# 2. Install dependencies
+pip install numpy pandas matplotlib seaborn scikit-learn xgboost lightgbm catboost statsmodels joblib jupyter
+
+# 3. Open the notebook
+jupyter notebook house_price_1lakh_end_to_end.ipynb
+```
+
+Make sure `house_price_dataset_1lakh.csv` is in the same folder as the notebook. You can also run it directly in **Google Colab** by uploading the notebook and the CSV.
+
+## 🔮 Example Prediction
+
+```python
+predict_price("Cuttack", "CDA", "Apartment", 1200, 3)
+# → ₹61.6 lakh
+
+predict_price("Mumbai", "Powai", "Apartment", 1200, 3)
+# → ₹361.3 lakh
+```
+
+## 📁 Files
+
+```
+├── house_price_1lakh_end_to_end.ipynb   # Main notebook
+├── house_price_dataset_1lakh.csv        # Dataset
+├── house_price_model.pkl                # Saved model pipeline (created by the notebook)
+└── README.md
+```
+
+## ⚠️ Limitations and Next Steps
+
+- Validate with a **time-based split** (train on past years, test on the latest year) for real use.
+- Selling speed is naturally noisy, so treat the probability as guidance only.
+- Add real features such as schools, hospitals and GPS location.
+- Try target encoding for `locality`, add SHAP explanations, and deploy with **FastAPI** or **Streamlit**.
+- Retrain regularly, because price levels drift each year.
+
+## 👤 Author
+
+**Saswat**
